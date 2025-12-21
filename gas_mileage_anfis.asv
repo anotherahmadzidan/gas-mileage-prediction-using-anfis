@@ -1,0 +1,114 @@
+%% Gas Mileage Prediction (Original Scale, Same as MATLAB Example)
+% Tujuan: menghasilkan hasil mirip dengan "fuzzy (1).pdf"
+% Pastikan file 'auto-mpg.data' ada di folder kerja MATLAB
+clear; close all; clc;
+rng(0);
+
+%% 1. Load Data
+fname = 'auto-mpg.data';
+fid = fopen(fname, 'r');
+if fid == -1
+    error('File auto-mpg.data tidak ditemukan di folder kerja.');
+end
+
+data_raw = [];
+while ~feof(fid)
+    line = fgetl(fid);
+    if isempty(line), continue; end
+    parts = textscan(line, '%f %f %f %s %f %f %f %f %q', ...
+        'MultipleDelimsAsOne', true);
+    mpg = parts{1};
+    cyl = parts{2};
+    disp = parts{3};
+    hp_str = parts{4}{1};
+    hp = str2double(hp_str);
+    wt = parts{5};
+    accel = parts{6};
+    year = parts{7};
+    if isnan(hp)
+        continue; % skip missing horsepower
+    end
+    data_raw = [data_raw; cyl disp hp wt accel year mpg];
+end
+fclose(fid);
+
+% Kolom data: [Cyl Disp HP Weight Accel Year MPG]
+
+%% 2. Split Data (odd = training, even = checking)
+trn_data = data_raw(1:2:end,:);
+chk_data = data_raw(2:2:end,:);
+
+% Input names
+input_name = {'Cylinder','Displacement','Horsepower','Weight','Acceleration','Year'};
+
+%% 3. Pilih input (Weight dan Year) sesuai contoh di PDF
+input_index = [4 6];
+new_trn_data = trn_data(:, [input_index, size(trn_data,2)]);
+new_chk_data = chk_data(:, [input_index, size(chk_data,2)]);
+
+%% 4. Generate initial FIS (grid partition)
+numMFs = 2;             % dua membership functions per input
+mfType = 'gbellmf';     % generalized bell MF
+in_fismat = genfis1(new_trn_data, numMFs, mfType);
+
+%% 5. ANFIS training setup
+anfisOpt = anfisOptions('InitialFIS', in_fismat, ...
+    'EpochNumber', 100, ...
+    'StepSizeDecreaseRate', 0.5, ...
+    'StepSizeIncreaseRate', 1.5, ...
+    'ValidationData', new_chk_data, ...
+    'DisplayANFISInformation', 0, ...
+    'DisplayErrorValues', 0, ...
+    'DisplayStepSize', 0, ...
+    'DisplayFinalResults', 0);
+
+[trn_out_fismat, trn_error, step_size, chk_out_fismat, chk_error] = ...
+    anfis(new_trn_data, anfisOpt);
+
+%% 6. Plot error (Figure 1)
+[min_chk_err, best_epoch] = min(chk_error);
+
+figure;
+plot(1:100, trn_error, 'g-', 'LineWidth', 1.5); hold on;
+plot(1:100, chk_error, 'r-', 'LineWidth', 1.5);
+plot(best_epoch, min_chk_err, 'ko', 'MarkerFaceColor', 'k');
+xlabel('Epoch numbers','FontSize',10);
+ylabel('RMS errors','FontSize',10);
+title('Training (green) and checking (red) error curve','FontSize',10);
+legend('Training','Checking','Minimum Checking Error','Location','best');
+grid on;
+
+%% 7. Compare ANFIS vs Linear Regression
+N = size(trn_data,1);
+A = [trn_data(:,1:6) ones(N,1)];
+B = trn_data(:,7);
+coef = A\B;
+Nc = size(chk_data,1);
+A_ck = [chk_data(:,1:6) ones(Nc,1)];
+B_ck = chk_data(:,7);
+lr_rmse = norm(A_ck*coef - B_ck)/sqrt(Nc);
+
+fprintf('\nRMSE against checking data\nANFIS : %.3f\tLinear Regression : %.3f\n', ...
+    min_chk_err, lr_rmse);
+
+%% 8. FIS surface (Figure 2)
+chk_out_fismat.Inputs(1).Name = 'Weight';
+chk_out_fismat.Inputs(2).Name = 'Year';
+chk_out_fismat.Outputs(1).Name = 'MPG';
+
+figure;
+gensurf(chk_out_fismat);
+title('Input-Output surface for trained FIS','FontSize',10);
+
+%% 9. Data distribution (Figure 3)
+figure;
+plot(new_trn_data(:,1), new_trn_data(:,2), 'bo'); hold on;
+plot(new_chk_data(:,1), new_chk_data(:,2), 'rx');
+xlabel('Weight','FontSize',10);
+ylabel('Year','FontSize',10);
+title('Training (o) and checking (x) data','FontSize',10);
+legend('Training','Checking');
+grid on;
+
+%% 10. Show result summary
+fprintf('\nBest checking RMSE at epoch %d: %.3f\n', best_epoch, min_chk_err);
